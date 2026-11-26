@@ -1,0 +1,69 @@
+name: Fieldnote hackathon browser tests
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Select one check on the reviewed fixture
+        required: true
+        type: choice
+        default: network-check
+        options: [network-check, account-check, hack-title, hack-faq-before, hack-faq-after]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fieldnote-demonstration
+  cancel-in-progress: false
+jobs:
+  development:
+    if: >-
+      github.repository == 'md-abunayem/savoir-brand_visibility_and_aeo_geo_platform' &&
+      github.actor == 'md-abunayem' && github.triggering_actor == github.actor &&
+      github.ref == 'refs/heads/main' && !github.event.repository.fork &&
+      github.event.repository.visibility == 'public' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    environment: fieldnote-reviewed
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check reviewed network choice
+        env:
+          FIELDNOTE_NETWORK: ${{ vars.FIELDNOTE_NETWORK }}
+        run: test "$FIELDNOTE_NETWORK" = standard-runner-approved
+      - name: Install the pinned provider CLI
+        run: npm install --prefix "$RUNNER_TEMP/fieldnote-tools" --no-audit --no-fund @testmuai/kane-cli@0.10.9
+      - name: Retrieve the reviewed FAQ failure
+        if: inputs.operation == 'hack-faq-after'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fieldnote-hack-faq-before-${{ vars.BEFORE_RUN_ID }}
+          path: ${{ runner.temp }}/before
+          run-id: ${{ vars.BEFORE_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Run the selected check
+        env:
+          STAGE: ${{ inputs.operation }}
+          FIELDNOTE_NETWORK: ${{ vars.FIELDNOTE_NETWORK }}
+          BEFORE_RUN_ID: ${{ vars.BEFORE_RUN_ID }}
+          APPROVED_DEV_RUN_ID: ${{ vars.APPROVED_DEV_RUN_ID }}
+          APPROVED_SHA: ${{ vars.APPROVED_SHA }}
+          APPROVED_STAGE: ${{ vars.APPROVED_STAGE }}
+          ZERO_CHARGE: ${{ vars.ZERO_CHARGE }}
+          LT_USERNAME: ${{ inputs.operation != 'network-check' && secrets.LT_USERNAME || '' }}
+          LT_ACCESS_KEY: ${{ inputs.operation != 'network-check' && secrets.LT_ACCESS_KEY || '' }}
+          VERIFICATION_EVIDENCE_KEY: ${{ inputs.operation != 'network-check' && secrets.VERIFICATION_EVIDENCE_KEY || '' }}
+        run: bash ci/hackathon.sh
+      - name: Retain encrypted case
+        if: "!cancelled() && inputs.operation != 'network-check'"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fieldnote-${{ inputs.operation }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/fieldnote.case
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false

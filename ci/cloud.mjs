@@ -16,10 +16,12 @@ import {
 const execute = promisify(execFile);
 const [command, operation] = process.argv.slice(2);
 const developmentTitle = operation === "dev-title";
-const stage = developmentTitle ? "title" : operation;
+const hackathon = ["hack-title", "hack-faq-before", "hack-faq-after"].includes(operation);
+const localArtifact = developmentTitle || hackathon;
+const stage = developmentTitle ? "title" : hackathon ? operation.slice(5) : operation;
 const live = ["title", "faq-before", "faq-after"].includes(stage);
 const env = process.env;
-const fixed = stage === "faq-after";
+const fixed = !hackathon && stage === "faq-after";
 const objective = stage === "title" ? titleObjective : faqObjective;
 const stageKey = "fieldnote-v1/";
 const work = (name) => join(env.CASE_WORK, name);
@@ -79,9 +81,23 @@ async function parent() {
 }
 async function prepare() {
   assert.ok(live);
-  if (developmentTitle) {
+  if (localArtifact) {
     checkDevelopmentApproval();
     seal({ probe: true });
+    if (hackathon && stage === "faq-after") {
+      assert.match(env.BEFORE_RUN_ID ?? "", /^[1-9]\d*$/);
+      const bytes = await readFile(join(env.RUNNER_TEMP, "before", "fieldnote.case"));
+      const before = openCase(bytes);
+      assert.equal(before.operation, "hack-faq-before");
+      assert.equal(before.run, env.BEFORE_RUN_ID);
+      assert.equal(before.result, "observed-defect");
+      assert.equal(before.evidence?.failedStep, true);
+      assert.equal(before.objective, digest(faqObjective));
+      assert.equal(before.packHash, digest(Buffer.from(before.pack, "base64")));
+      assert.notEqual(before.sha, env.GITHUB_SHA);
+      assert.notEqual(before.revision, digest(page("initial")));
+      await writeFile(work("parent"), JSON.stringify({ run: before.run, sha: before.sha, revision: before.revision, hash: digest(bytes) }), { flag: "wx" });
+    }
     return;
   }
   assert.equal(env.APPROVED_RUN, env.GITHUB_RUN_NUMBER);
@@ -120,7 +136,8 @@ function checkDevelopmentApproval() {
   assert.equal(env.GITHUB_RUN_ATTEMPT, "1");
   assert.equal(env.APPROVED_DEV_RUN_ID, env.GITHUB_RUN_ID);
   assert.equal(env.APPROVED_SHA, env.GITHUB_SHA);
-  assert.equal(env.APPROVED_STAGE, "dev-title");
+  assert.equal(env.APPROVED_STAGE, operation);
+  if (hackathon) assert.equal(env.FIELDNOTE_NETWORK, "standard-runner-approved");
   assert.equal(env.ZERO_CHARGE, "confirmed");
 }
 async function admission() {
@@ -128,7 +145,7 @@ async function admission() {
   assert.ok(
     auth.authenticated && Number.isFinite(auth.balance) && auth.balance > 0,
   );
-  if (developmentTitle) {
+  if (localArtifact) {
     checkDevelopmentApproval();
     await writeFile(join(env.RUNNER_TEMP, "fieldnote-title.admitted"), env.GITHUB_RUN_ID, {
       flag: "wx", mode: 0o600,
@@ -231,9 +248,9 @@ async function launch() {
     "--url",
     "http://127.0.0.1:4318/",
     "--max-steps",
-    developmentTitle ? "3" : "5",
+    localArtifact && stage === "title" ? "3" : "5",
     "--timeout",
-    developmentTitle ? "90" : "150",
+    localArtifact ? "90" : "150",
   );
   let malformed = false;
   const events = [];
@@ -298,13 +315,13 @@ async function launch() {
   }
   if (packs.length === 1 && (await lstat(packs[0])).size <= 16 * 1024 * 1024) {
     result.pack = (await readFile(packs[0])).toString("base64");
-    if (developmentTitle) result.executionId = basename(packs[0], ".evidence");
+    if (localArtifact) result.executionId = basename(packs[0], ".evidence");
   }
-  if (developmentTitle && !result.executionId && typeof end.execution_id === "string")
+  if (localArtifact && !result.executionId && typeof end.execution_id === "string")
     result.executionId = end.execution_id;
-  if (developmentTitle && typeof end.execution_id === "string" && end.execution_id !== result.executionId)
+  if (localArtifact && typeof end.execution_id === "string" && end.execution_id !== result.executionId)
     result.consistent = false;
-  if (developmentTitle) {
+  if (localArtifact) {
     // Keep only structured provider diagnostics. Free text can contain signed URLs.
     result.errors = events.filter((event) => event?.type === "error").slice(0, 8).map((event) => ({
       code: typeof event.code === "string" && /^[\w.-]{1,80}$/.test(event.code) ? event.code : null,
@@ -364,17 +381,18 @@ async function settle() {
     evidence?.failedStep;
   const result =
     evidence &&
-    (!developmentTitle || (typeof raw.executionId === "string" &&
+    (!localArtifact || (typeof raw.executionId === "string" &&
       /^[\w-]{1,128}$/.test(raw.executionId) && evidence.runId === raw.executionId)) &&
     accounted &&
     raw.consistent &&
-    (stage === "faq-before" ? defect : pass)
-      ? stage === "faq-before"
+    (hackathon ? (pass || (stage.startsWith("faq-") && defect)) : (stage === "faq-before" ? defect : pass))
+      ? defect
         ? "observed-defect"
         : "verified"
       : "inconclusive";
   const record = {
     ...raw,
+    ...(hackathon ? { operation } : {}),
     pack: pack.toString("base64"),
     packHash: digest(pack),
     stage,
@@ -384,7 +402,7 @@ async function settle() {
     initialBalance: JSON.parse(await readFile(work("identity"), "utf8"))
       .balance,
     parent:
-      stage === "title"
+      stage === "title" || (hackathon && stage === "faq-before")
         ? null
         : JSON.parse(await readFile(work("parent"), "utf8")),
     revision: digest(page(fixed ? "approved" : "initial")),
@@ -392,14 +410,15 @@ async function settle() {
     sha: env.GITHUB_SHA,
     run: env.GITHUB_RUN_ID,
   };
-  if (developmentTitle) {
+  if (localArtifact) {
     checkDevelopmentApproval();
     assert.equal(await readFile(join(env.RUNNER_TEMP, "fieldnote-title.admitted"), "utf8"), env.GITHUB_RUN_ID);
-    await writeFile(join(env.RUNNER_TEMP, "fieldnote-title.case"), seal(record), {
+    await writeFile(join(env.RUNNER_TEMP, hackathon ? "fieldnote.case" : "fieldnote-title.case"), seal(record), {
       mode: 0o600, flag: "wx",
     });
     console.log("Encrypted development case prepared. Outcome:", result);
     assert.notEqual(result, "inconclusive");
+    if (hackathon && stage === "faq-after") assert.equal(result, "verified");
     return;
   }
   const response = await store(
