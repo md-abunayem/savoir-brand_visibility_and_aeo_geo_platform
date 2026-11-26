@@ -4,7 +4,7 @@ umask 077
 trap 'printf "Runner check stopped at line %s (exit %s)\n" "$LINENO" "$?" >&2' ERR
 [[ ${GITHUB_ACTIONS:-} == true && ${RUNNER_ENVIRONMENT:-} == github-hosted && ${GITHUB_RUN_ATTEMPT:-} == 1 ]]
 [[ $GITHUB_REPOSITORY == md-abunayem/savoir-brand_visibility_and_aeo_geo_platform && $GITHUB_REF == refs/heads/main ]]
-[[ $STAGE =~ ^(qualify|account|title|faq-before|faq-after)$ ]]
+[[ $STAGE =~ ^(qualify|account|title|dev-title|faq-before|faq-after)$ ]]
 export CASE_WORK
 CASE_WORK=$(mktemp -d "$RUNNER_TEMP/fieldnote.XXXXXXXX")
 live=false

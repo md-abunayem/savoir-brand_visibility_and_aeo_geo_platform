@@ -1,0 +1,74 @@
+name: Fieldnote development title
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Select the evidence check or the separately approved title
+        required: true
+        type: choice
+        default: qualify-artifact
+        options: [qualify-artifact, dev-title]
+permissions:
+  contents: read
+concurrency:
+  group: fieldnote-demonstration
+  cancel-in-progress: false
+jobs:
+  development:
+    if: >-
+      github.repository == 'md-abunayem/savoir-brand_visibility_and_aeo_geo_platform' &&
+      github.actor == 'md-abunayem' && github.triggering_actor == github.actor &&
+      github.ref == 'refs/heads/main' && !github.event.repository.fork &&
+      github.event.repository.visibility == 'public' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    environment: fieldnote-reviewed
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Exercise the artifact boundary with a temporary key
+        if: inputs.operation == 'qualify-artifact'
+        run: node ci/check-dev-title.mjs
+      - name: Install tools before loading title credentials
+        if: inputs.operation == 'dev-title'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fieldnote-tools" --no-audit --no-fund @testmuai/kane-cli@0.10.9
+          sudo apt-get -qq update
+          sudo apt-get -qq install -y haproxy nftables
+      - name: Run one approved synthetic title
+        if: inputs.operation == 'dev-title'
+        env:
+          STAGE: dev-title
+          APPROVED_DEV_RUN_ID: ${{ vars.APPROVED_DEV_RUN_ID }}
+          APPROVED_SHA: ${{ vars.APPROVED_SHA }}
+          APPROVED_STAGE: ${{ vars.APPROVED_STAGE }}
+          ZERO_CHARGE: ${{ vars.ZERO_CHARGE }}
+          UPLOAD_HOST: ${{ vars.UPLOAD_HOST }}
+          LT_USERNAME: ${{ secrets.LT_USERNAME }}
+          LT_ACCESS_KEY: ${{ secrets.LT_ACCESS_KEY }}
+          VERIFICATION_EVIDENCE_KEY: ${{ secrets.VERIFICATION_EVIDENCE_KEY }}
+        run: bash ci/runner.sh
+      - name: Retain only the encrypted case, including inconclusive outcomes
+        if: "!cancelled()"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fieldnote-${{ inputs.operation }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/fieldnote-title.case
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: false
+      - name: Download qualification ciphertext
+        if: inputs.operation == 'qualify-artifact'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fieldnote-qualify-artifact-${{ github.run_id }}
+          path: ${{ runner.temp }}/fieldnote-readback
+      - name: Verify hosted artifact inventory and bytes
+        if: inputs.operation == 'qualify-artifact'
+        run: |
+          test "$(find "$RUNNER_TEMP/fieldnote-readback" -mindepth 1 | wc -l)" -eq 1
+          cmp "$RUNNER_TEMP/fieldnote-title.case" "$RUNNER_TEMP/fieldnote-readback/fieldnote-title.case"

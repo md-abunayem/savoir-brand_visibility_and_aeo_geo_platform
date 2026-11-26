@@ -84,9 +84,13 @@ def inspect(path):
             elif match and data:
                 failures.add(match[1])
         require("run.yaml" in names and archive.read("run.yaml"))
+        run_id = re.search(rb"""(?m)^run_id:[ \t]*["']?([A-Za-z0-9_-]{1,128})["']?[ \t]*\r?$""", archive.read("run.yaml"))
         require(any(re.fullmatch(r"tests/[^/]+/result\.yaml", n) and archive.read(n) for n in names))
     require(images)
-    return {"screenshots": sorted(images.values()), "failedStep": bool(failures.intersection(images))}
+    result = {"screenshots": sorted(images.values()), "failedStep": bool(failures.intersection(images))}
+    if run_id:
+        result["runId"] = run_id[1].decode("ascii")
+    return result
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify, stripVTControlCharacters } from "node:util";
 import { readFile, writeFile, readdir, lstat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { openCase, seal, requireApproval } from "../case.mjs";
 import {
   page,
@@ -14,7 +14,9 @@ import {
 } from "../fixture.mjs";
 
 const execute = promisify(execFile);
-const [command, stage] = process.argv.slice(2);
+const [command, operation] = process.argv.slice(2);
+const developmentTitle = operation === "dev-title";
+const stage = developmentTitle ? "title" : operation;
 const live = ["title", "faq-before", "faq-after"].includes(stage);
 const env = process.env;
 const fixed = stage === "faq-after";
@@ -77,6 +79,11 @@ async function parent() {
 }
 async function prepare() {
   assert.ok(live);
+  if (developmentTitle) {
+    checkDevelopmentApproval();
+    seal({ probe: true });
+    return;
+  }
   assert.equal(env.APPROVED_RUN, env.GITHUB_RUN_NUMBER);
   assert.equal(env.APPROVED_SHA, env.GITHUB_SHA);
   assert.equal(env.APPROVED_STAGE, stage);
@@ -107,11 +114,27 @@ async function prepare() {
   await anonymous.body?.cancel();
   assert.ok([401, 403, 404].includes(anonymous.status), "Private vault accepted an anonymous read");
 }
+function checkDevelopmentApproval() {
+  assert.match(env.GITHUB_RUN_ID ?? "", /^[1-9]\d*$/);
+  assert.match(env.GITHUB_SHA ?? "", /^[a-f0-9]{40}$/);
+  assert.equal(env.GITHUB_RUN_ATTEMPT, "1");
+  assert.equal(env.APPROVED_DEV_RUN_ID, env.GITHUB_RUN_ID);
+  assert.equal(env.APPROVED_SHA, env.GITHUB_SHA);
+  assert.equal(env.APPROVED_STAGE, "dev-title");
+  assert.equal(env.ZERO_CHARGE, "confirmed");
+}
 async function admission() {
   const auth = JSON.parse(await readFile(work("identity"), "utf8"));
   assert.ok(
     auth.authenticated && Number.isFinite(auth.balance) && auth.balance > 0,
   );
+  if (developmentTitle) {
+    checkDevelopmentApproval();
+    await writeFile(join(env.RUNNER_TEMP, "fieldnote-title.admitted"), env.GITHUB_RUN_ID, {
+      flag: "wx", mode: 0o600,
+    });
+    return;
+  }
   const result = await store(
     "ADMISSION_URL",
     stage + ".lock",
@@ -208,9 +231,9 @@ async function launch() {
     "--url",
     "http://127.0.0.1:4318/",
     "--max-steps",
-    "5",
+    developmentTitle ? "3" : "5",
     "--timeout",
-    "150",
+    developmentTitle ? "90" : "150",
   );
   let malformed = false;
   const events = [];
@@ -273,8 +296,22 @@ async function launch() {
         packs.push(join(folder, f.name));
     }
   }
-  if (packs.length === 1 && (await lstat(packs[0])).size <= 16 * 1024 * 1024)
+  if (packs.length === 1 && (await lstat(packs[0])).size <= 16 * 1024 * 1024) {
     result.pack = (await readFile(packs[0])).toString("base64");
+    if (developmentTitle) result.executionId = basename(packs[0], ".evidence");
+  }
+  if (developmentTitle && !result.executionId && typeof end.execution_id === "string")
+    result.executionId = end.execution_id;
+  if (developmentTitle && typeof end.execution_id === "string" && end.execution_id !== result.executionId)
+    result.consistent = false;
+  if (developmentTitle) {
+    // Keep only structured provider diagnostics. Free text can contain signed URLs.
+    result.errors = events.filter((event) => event?.type === "error").slice(0, 8).map((event) => ({
+      code: typeof event.code === "string" && /^[\w.-]{1,80}$/.test(event.code) ? event.code : null,
+      resultCode: /^\d{3}$/.test(String(event.result_code)) ? String(event.result_code) : null,
+      reason: typeof event.reason_code === "string" && /^[\w.]{1,80}$/.test(event.reason_code) ? event.reason_code : null,
+    }));
+  }
   const post = await cli("balance");
   const amount = /^Available credits:\s*(-?\d+(?:\.\d+)?)\s*$/im.exec(
     stripVTControlCharacters(post.stdout),
@@ -327,6 +364,8 @@ async function settle() {
     evidence?.failedStep;
   const result =
     evidence &&
+    (!developmentTitle || (typeof raw.executionId === "string" &&
+      /^[\w-]{1,128}$/.test(raw.executionId) && evidence.runId === raw.executionId)) &&
     accounted &&
     raw.consistent &&
     (stage === "faq-before" ? defect : pass)
@@ -353,6 +392,16 @@ async function settle() {
     sha: env.GITHUB_SHA,
     run: env.GITHUB_RUN_ID,
   };
+  if (developmentTitle) {
+    checkDevelopmentApproval();
+    assert.equal(await readFile(join(env.RUNNER_TEMP, "fieldnote-title.admitted"), "utf8"), env.GITHUB_RUN_ID);
+    await writeFile(join(env.RUNNER_TEMP, "fieldnote-title.case"), seal(record), {
+      mode: 0o600, flag: "wx",
+    });
+    console.log("Encrypted development case prepared. Outcome:", result);
+    assert.notEqual(result, "inconclusive");
+    return;
+  }
   const response = await store(
     "CASE_OUTPUT_URL",
     stage + ".case",
