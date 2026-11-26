@@ -138,6 +138,11 @@ function checkDevelopmentApproval() {
   assert.equal(env.APPROVED_SHA, env.GITHUB_SHA);
   assert.equal(env.APPROVED_STAGE, operation);
   if (hackathon) assert.equal(env.FIELDNOTE_NETWORK, "standard-runner-approved");
+  if (operation === "hack-title" && env.PROMO_TITLE_RUN_ID) {
+    assert.equal(env.PROMO_TITLE_RUN_ID, env.GITHUB_RUN_ID);
+    assert.ok(!env.ZERO_CHARGE, "Use only one billing approval mode");
+    return;
+  }
   assert.equal(env.ZERO_CHARGE, "confirmed");
 }
 async function admission() {
@@ -393,6 +398,15 @@ async function settle() {
   const record = {
     ...raw,
     ...(hackathon ? { operation } : {}),
+    ...(operation === "hack-title" && env.PROMO_TITLE_RUN_ID ? {
+      creditAuthorization: {
+        basis: "owner-authorized promotional credits",
+        additionalMonetaryBudgetUsd: 0,
+        providerOverageProtection: "unverified",
+        parentAutoReload: "unverified",
+        run: env.PROMO_TITLE_RUN_ID,
+      },
+    } : {}),
     pack: pack.toString("base64"),
     packHash: digest(pack),
     stage,

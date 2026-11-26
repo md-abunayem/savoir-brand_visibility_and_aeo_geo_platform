@@ -53,6 +53,7 @@ jobs:
           APPROVED_DEV_RUN_ID: ${{ vars.APPROVED_DEV_RUN_ID }}
           APPROVED_SHA: ${{ vars.APPROVED_SHA }}
           APPROVED_STAGE: ${{ vars.APPROVED_STAGE }}
+          PROMO_TITLE_RUN_ID: ${{ vars.PROMO_TITLE_RUN_ID }}
           ZERO_CHARGE: ${{ vars.ZERO_CHARGE }}
           LT_USERNAME: ${{ inputs.operation != 'network-check' && secrets.LT_USERNAME || '' }}
           LT_ACCESS_KEY: ${{ inputs.operation != 'network-check' && secrets.LT_ACCESS_KEY || '' }}
