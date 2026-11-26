@@ -1,0 +1,13 @@
+*
+!/.gitignore
+!/README.md
+!/demo.md
+!/case.mjs
+!/fixture.mjs
+!/ci/
+!/ci/runner.sh
+!/ci/cloud.mjs
+!/ci/pack.py
+!/.github/
+!/.github/workflows/
+!/.github/workflows/fieldnote.yml
