@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+trap 'printf "Runner check stopped at line %s (exit %s)\n" "$LINENO" "$?" >&2' ERR
 [[ ${GITHUB_ACTIONS:-} == true && ${RUNNER_ENVIRONMENT:-} == github-hosted && ${GITHUB_RUN_ATTEMPT:-} == 1 ]]
 [[ $GITHUB_REPOSITORY == md-abunayem/savoir-brand_visibility_and_aeo_geo_platform && $GITHUB_REF == refs/heads/main ]]
 [[ $STAGE =~ ^(qualify|account|title|faq-before|faq-after)$ ]]
@@ -107,15 +108,22 @@ try:
 except (ssl.SSLEOFError,ConnectionResetError): pass
 else: raise RuntimeError('Unexpected SNI acceptance')
 PY
+echo "Restricted identity, filesystem, cgroup and TLS probes passed"
 sudo systemd-run --quiet --wait --pipe "${web[@]}" /bin/bash -eu -c '
-  google-chrome --headless --disable-background-networking --user-data-dir=/tmp/profile --dump-dom chrome://sandbox > /tmp/status
+  echo "Inspecting headless Chrome sandbox status"
+  google-chrome --headless --allow-chrome-scheme-url --disable-background-networking --user-data-dir=/tmp/profile --dump-dom chrome://sandbox > /tmp/status
   sed -E "s/<[^>]+>/ /g" /tmp/status | tr "\n" " " | tr -s " " > /tmp/text
+  echo "Checking renderer seccomp"
   grep -Eiq "Seccomp-BPF sandbox Yes" /tmp/text
+  echo "Checking renderer namespace"
   grep -Eiq "(PID namespaces|SUID sandbox) Yes" /tmp/text
+  echo "Rendering controlled fixture"
   google-chrome --headless --user-data-dir=/tmp/profile --dump-dom http://127.0.0.1:4318/ | grep -F "<title>Fieldnote Seed Library</title>" >/dev/null
+  echo "Capturing controlled screenshot"
   google-chrome --headless --user-data-dir=/tmp/profile --screenshot=/tmp/field.png http://127.0.0.1:4318/
   file /tmp/field.png | grep -q "PNG image data"
-' >/dev/null 2>&1
+' 2>/dev/null
+echo "Chrome sandbox, title and screenshot verified. Checking Kane version."
 sudo systemd-run --quiet --wait --pipe "${cli[@]}" "$node_bin" "$root/tools/node_modules/@testmuai/kane-cli/bin/kane-cli.cjs" --version | grep -q '0\.10\.9'
 echo 'Hosted fixture, sandboxed Chrome capture, TLS restrictions and resource checks passed.'
 if [[ $STAGE == qualify ]]; then exit 0; fi
